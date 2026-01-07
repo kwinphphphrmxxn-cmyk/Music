@@ -8,12 +8,11 @@ import asyncio
 from flask import Flask
 from static_ffmpeg import add_paths
 
-# --- 🛠 ส่วนแก้บัคเสียง: บังคับโหลด FFmpeg 🛠 ---
+# --- ⚙️ ระบบหลังบ้านเพื่อให้รันบน Render ได้ 24 ชม. ---
 add_paths() 
-
 app = Flask('')
 @app.route('/')
-def home(): return "บอทออนไลน์พร้อมใช้งานแล้วครับ! 🎶"
+def home(): return "Music Bot is Online! 🎶"
 def run_web(): app.run(host='0.0.0.0', port=8080)
 
 class MyBot(commands.Bot):
@@ -31,7 +30,7 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# การตั้งค่าเสียงให้เสถียร (ลดปัญหาเพลงดับกลางคัน)
+# --- 🔊 ตั้งค่าระบบเสียง (FFMPEG) ---
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
@@ -46,13 +45,15 @@ def get_ydl_opts():
         'nocheckcertificate': True,
     }
 
-# ฟังก์ชันอัปเดตสถานะ Streaming หน้าบอท
+# --- 📊 ระบบแสดงสถานะ Streaming สีม่วงหน้าบอท ---
 async def update_status():
     await bot.wait_until_ready()
     while not bot.is_closed():
         server_count = len(bot.guilds)
+        # แสดงสถานะว่าอยู่กี่เซิร์ฟเวอร์เพื่อให้คนใช้มั่นใจ
+        status_text = f"ให้บริการใน {server_count} เซิร์ฟเวอร์ | /play"
         await bot.change_presence(activity=discord.Streaming(
-            name=f"ให้บริการใน {server_count} เซิร์ฟเวอร์ | /play", 
+            name=status_text, 
             url="https://www.twitch.tv/directory"
         ))
         await asyncio.sleep(300) # อัปเดตทุก 5 นาที
@@ -67,7 +68,6 @@ def play_next(interaction, guild_id, last_song):
 
     if guild_id in bot.queue and len(bot.queue[guild_id]) > 0:
         next_song = bot.queue[guild_id].pop(0)
-        # แก้บัค: ใช้ FFmpegOpusAudio เพื่อคุณภาพและความเสถียร
         source = discord.FFmpegOpusAudio.from_probe(next_song['url'], **FFMPEG_OPTIONS)
         vc.play(source, after=lambda e: play_next(interaction, guild_id, next_song))
         
@@ -79,10 +79,10 @@ def play_next(interaction, guild_id, last_song):
 
 @bot.event
 async def on_ready():
-    print(f'✅ บอท {bot.user.name} ออนไลน์เรียบร้อยครับ!')
+    print(f'✅ บอท {bot.user.name} เริ่มทำงานแล้วครับ!')
     bot.loop.create_task(update_status())
 
-# --- คำสั่ง Slash Commands (สุภาพ) ---
+# --- 🛠️ คำสั่งเพลง (Slash Commands) ---
 
 @bot.tree.command(name="play", description="ค้นหาและเล่นเพลงจากชื่อเพลงหรือลิงก์")
 async def play(interaction: discord.Interaction, search: str):
@@ -93,7 +93,7 @@ async def play(interaction: discord.Interaction, search: str):
 
     with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
         try:
-            # ค้นหาเพลง (ลอง SoundCloud ก่อนเพื่อความเสถียร)
+            # ค้นหาเพลงผ่านระบบ SoundCloud/YouTube
             info = ydl.extract_info(f"scsearch:{search}", download=False)
             if not info['entries']:
                 info = ydl.extract_info(f"ytsearch:{search}", download=False)
@@ -107,29 +107,30 @@ async def play(interaction: discord.Interaction, search: str):
                 gid = interaction.guild.id
                 if gid not in bot.queue: bot.queue[gid] = []
                 bot.queue[gid].append(song)
-                await interaction.followup.send(f"✅ เพิ่มเพลง **{song['title']}** ลงในคิวแล้วครับ")
+                await interaction.followup.send(f"✅ เพิ่มเพลง **{song['title']}** ลงในคิวเรียบร้อยครับ")
             else:
                 source = await discord.FFmpegOpusAudio.from_probe(song['url'], **FFMPEG_OPTIONS)
                 vc.play(source, after=lambda e: play_next(interaction, interaction.guild.id, song))
                 await interaction.followup.send(f"🎶 กำลังเริ่มเล่นเพลง: **{song['title']}**")
-        except Exception as e:
-            print(f"Error: {e}")
-            await interaction.followup.send("❌ ขออภัยครับ ไม่สามารถเล่นเพลงนี้ได้ในขณะนี้")
+        except Exception:
+            await interaction.followup.send("❌ ขออภัยครับ ระบบไม่สามารถดึงข้อมูลเพลงนี้ได้")
+
+@bot.tree.command(name="skip", description="ข้ามเพลงที่กำลังเล่นอยู่")
+async def skip(interaction: discord.Interaction):
+    if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
+        interaction.guild.voice_client.stop()
+        await interaction.response.send_message("⏭️ ข้ามเพลงปัจจุบันเรียบร้อยครับ")
+    else:
+        await interaction.response.send_message("ไม่มีเพลงที่กำลังเล่นอยู่ขณะนี้ครับ")
 
 @bot.tree.command(name="stop", description="หยุดเล่นเพลงและให้บอทออกจากห้องเสียง")
 async def stop(interaction: discord.Interaction):
     bot.queue[interaction.guild.id] = []
     if interaction.guild.voice_client:
         await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("⏹️ หยุดเล่นเพลงและออกจากห้องเสียงเรียบร้อยครับ")
+        await interaction.response.send_message("⏹️ ปิดเพลงและออกจากห้องเสียงเรียบร้อยครับ")
     else:
         await interaction.response.send_message("บอทไม่ได้อยู่ในห้องเสียงครับ")
-
-@bot.tree.command(name="skip", description="ข้ามเพลงที่กำลังเล่นอยู่")
-async def skip(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        interaction.guild.voice_client.stop()
-        await interaction.response.send_message("⏭️ ข้ามเพลงเรียบร้อยครับ")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
