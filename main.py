@@ -11,29 +11,28 @@ import datetime
 from flask import Flask
 from static_ffmpeg import add_paths
 
-# --- 🛠️ ระบบหลังบ้าน ---
+# --- 🛠️ ระบบหลังบ้านสำหรับรันบน Render ---
 add_paths() 
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Smooth & Ready! 🚀"
+def home(): return "Bot is Online with Thai Proxy System! 🇹🇭"
 def run_web(): app.run(host='0.0.0.0', port=8080)
 
 TOKEN = os.getenv('TOKEN')
 
-# --- 🔊 สูตรแก้กระตุก: เพิ่ม Buffer และการจองข้อมูลล่วงหน้า ---
+# --- 🔊 ตั้งค่า FFMPEG แบบตุนข้อมูลหนัก (สู้ Proxy ฟรีที่ช้า) ---
 FFMPEG_OPTIONS = {
     'before_options': (
         '-reconnect 1 '
         '-reconnect_streamed 1 '
         '-reconnect_delay_max 5 '
-        '-probesize 50M '         # ตรวจสอบข้อมูลล่วงหน้า 50MB (ช่วยให้ไม่สะดุด)
-        '-analyzeduration 50M'
+        '-probesize 100M '         # ตุนข้อมูลล่วงหน้า 100MB
+        '-analyzeduration 100M'
     ),
     'options': (
         '-vn '
-        '-b:a 128k '              # บิตเรตที่เสถียรที่สุดสำหรับ Discord
-        '-threads 4 '             # ใช้พลังประมวลผลเพิ่มขึ้น
-        '-buffer_size 4M'         # ตุนข้อมูลเพลงไว้ในแรม 4MB
+        '-b:a 96k '               # ลดบิตเรตลงเล็กน้อยเพื่อให้โหลดผ่าน Proxy ได้ลื่นขึ้น
+        '-buffer_size 10M'        # เพิ่ม Buffer ในแรมเป็น 10MB
     )
 }
 
@@ -51,14 +50,24 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# --- 🛰️ ระบบ Proxy (ใช้เฉพาะตอนค้นหาเพื่อความเร็ว) ---
+# --- 🛰️ ระบบดึง Proxy ไทยอัตโนมัติ (กรองเฉพาะ TH) ---
 def get_random_proxy():
-    try:
-        url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            return random.choice(response.text.splitlines())
-    except: return None
+    # ดึงจาก API ที่รวม Proxy ไทยไว้ให้
+    sources = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=TH&ssl=all&anonymity=all",
+        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
+    ]
+    for url in sources:
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                proxies = response.text.splitlines()
+                if proxies:
+                    selected = random.choice(proxies[:30]) # เลือกตัวต้นๆ ที่มักจะใหม่กว่า
+                    print(f"📡 ใช้ Proxy: {selected}")
+                    return selected
+        except:
+            continue
     return None
 
 def get_ydl_opts():
@@ -71,7 +80,7 @@ def get_ydl_opts():
         'nocheckcertificate': True,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
         'proxy': f"http://{proxy}" if proxy else None,
-        'source_address': '0.0.0.0' # บังคับใช้ IPv4 เพื่อความนิ่ง
+        'source_address': '0.0.0.0'
     }
 
 # --- 📡 ระบบอัปเดตสถานะหน้าโปรไฟล์ ---
@@ -79,16 +88,17 @@ async def update_status():
     await bot.wait_until_ready()
     while not bot.is_closed():
         await bot.change_presence(activity=discord.Streaming(
-            name=f"อยู่ใน {len(bot.guilds)} เซิร์ฟเวอร์ | /play", 
+            name=f"ใน {len(bot.guilds)} เซิร์ฟเวอร์ | /play", 
             url="https://www.twitch.tv/directory"
         ))
         await asyncio.sleep(300)
 
-# --- ⏰ ระบบรีเซ็ตตอนเที่ยงคืนไทย ---
+# --- ⏰ ระบบรีเซ็ตตอน 00:00 น. ---
 @tasks.loop(minutes=1)
 async def check_midnight():
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7)))
     if now.hour == 0 and now.minute == 0:
+        print("♻️ รีเซ็ตระบบประจำวัน...")
         bot.queue.clear()
         bot.loop_mode.clear()
         for vc in bot.voice_clients:
@@ -97,17 +107,17 @@ async def check_midnight():
 
 @bot.event
 async def on_ready():
-    print(f'✅ บอท {bot.user.name} ออนไลน์และปรับจูนความเสถียรแล้ว!')
+    print(f'✅ บอท {bot.user.name} พร้อมลุยด้วย Proxy ไทย!')
     bot.loop.create_task(update_status())
     check_midnight.start()
 
-# --- ⌨️ คำสั่ง Slash Commands (ภาษาธรรมชาติ) ---
+# --- ⌨️ คำสั่ง Slash Commands ---
 
-@bot.tree.command(name="play", description="เล่นเพลง (ปรับจูนพิเศษกันกระตุก)")
+@bot.tree.command(name="play", description="เล่นเพลง (ดึง Proxy ไทยอัตโนมัติ)")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
     if not interaction.user.voice:
-        return await interaction.followup.send("❌ เข้าห้องเสียงก่อนนะ เดี๋ยวเปิดให้ฟัง")
+        return await interaction.followup.send("❌ เข้าห้องเสียงก่อนนะจ๊ะ")
 
     max_retries = 3
     song_info = None
@@ -119,7 +129,7 @@ async def play(interaction: discord.Interaction, search: str):
                 break
         except:
             if i == max_retries - 1:
-                return await interaction.followup.send("❌ Proxy มีปัญหา ลองกดสั่งเพลงอีกทีเพื่อสุ่มไอพีใหม่นะ")
+                return await interaction.followup.send("❌ หาเพลงไม่เจอ ลองใหม่อีกครั้งนะ")
             continue
 
     if song_info:
@@ -128,11 +138,11 @@ async def play(interaction: discord.Interaction, search: str):
             gid = interaction.guild.id
             if gid not in bot.queue: bot.queue[gid] = []
             bot.queue[gid].append(song_info)
-            await interaction.followup.send(f"✅ จองคิวไว้ให้แล้ว: **{song_info['title']}**")
+            await interaction.followup.send(f"✅ เพิ่มเข้าคิว: **{song_info['title']}**")
         else:
             source = await discord.FFmpegOpusAudio.from_probe(song_info['url'], **FFMPEG_OPTIONS)
             vc.play(source, after=lambda e: play_next(interaction, interaction.guild.id, song_info))
-            await interaction.followup.send(f"🎶 กำลังเปิดเพลง: **[{song_info['title']}]({song_info['link']})** แบบลื่นๆ")
+            await interaction.followup.send(f"🎶 กำลังเล่น: **{song_info['title']}** (ไทยพรอ็กซี)")
 
 def play_next(interaction, guild_id, last_song):
     vc = interaction.guild.voice_client
@@ -145,33 +155,34 @@ def play_next(interaction, guild_id, last_song):
         source = discord.FFmpegOpusAudio.from_probe(next_song['url'], **FFMPEG_OPTIONS)
         vc.play(source, after=lambda e: play_next(interaction, guild_id, next_song))
 
-@bot.tree.command(name="skip", description="ข้ามไปเพลงถัดไป")
+@bot.tree.command(name="skip", description="ข้ามเพลง")
 async def skip(interaction: discord.Interaction):
     if interaction.guild.voice_client:
         interaction.guild.voice_client.stop()
-        await interaction.response.send_message("⏭️ โอเค ข้ามให้แล้ว!")
+        await interaction.response.send_message("⏭️ ข้ามให้แล้ว!")
 
-@bot.tree.command(name="stop", description="หยุดเล่นและล้างคิว")
+@bot.tree.command(name="stop", description="หยุดและล้างคิว")
 async def stop(interaction: discord.Interaction):
     bot.queue[interaction.guild.id] = []
     if interaction.guild.voice_client:
         await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("⏹️ ปิดเพลง แยกย้าย!")
+        await interaction.response.send_message("⏹️ ปิดเพลงและแยกย้าย")
 
-@bot.tree.command(name="queue", description="ดูรายการเพลงที่ต่อคิว")
+@bot.tree.command(name="queue", description="ดูคิวเพลง")
 async def queue(interaction: discord.Interaction):
     gid = interaction.guild.id
     if gid in bot.queue and len(bot.queue[gid]) > 0:
-        msg = "**📜 รายการเพลงที่รอเปิด:**\n" + "\n".join([f"{i+1}. {s['title']}" for i, s in enumerate(bot.queue[gid][:10])])
+        msg = "**📜 คิวเพลง:**\n" + "\n".join([f"{i+1}. {s['title']}" for i, s in enumerate(bot.queue[gid][:10])])
         await interaction.response.send_message(msg)
-    else: await interaction.response.send_message("ตอนนี้ไม่มีคิวเพลงเลยจ้า")
+    else: await interaction.response.send_message("ไม่มีคิวเพลงจ้า")
 
-@bot.tree.command(name="loop", description="วนเพลงเดิมซ้ำๆ")
+@bot.tree.command(name="loop", description="เปิด/ปิด การวนเพลง")
 async def loop(interaction: discord.Interaction):
     gid = interaction.guild.id
     bot.loop_mode[gid] = not bot.loop_mode.get(gid, False)
-    await interaction.response.send_message(f"🔁 โหมดเล่นวน: {'เปิดแล้ว' if bot.loop_mode[gid] else 'ปิดแล้ว'}")
+    await interaction.response.send_message(f"🔁 โหมดวนเพลง: {'เปิด' if bot.loop_mode[gid] else 'ปิด'}")
 
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
     bot.run(TOKEN)
+
